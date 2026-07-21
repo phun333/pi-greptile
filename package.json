@@ -1,5 +1,5 @@
 {
-  "name": "greptile-pi",
+  "name": "pi-greptile",
   "version": "0.1.0",
   "description": "Native pi tools for Greptile: AI code reviews, PR data, and organizational custom context — no MCP adapter needed.",
   "type": "module",
@@ -19,17 +19,23 @@
     "mcp"
   ],
   "license": "MIT",
+  "author": "Ali (https://github.com/phun333)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ali/greptile-pi.git"
+    "url": "git+https://github.com/phun333/pi-greptile.git"
   },
+  "bugs": {
+    "url": "https://github.com/phun333/pi-greptile/issues"
+  },
+  "homepage": "https://github.com/phun333/pi-greptile#readme",
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

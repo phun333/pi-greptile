@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install peer deps for typecheck
+        run: npm install --no-save typescript typebox @earendil-works/pi-ai @earendil-works/pi-coding-agent @earendil-works/pi-tui @types/node
+      - name: Typecheck
+        run: npx tsc -p tsconfig.json
+      - name: Test
+        run: node --test test/*.test.ts

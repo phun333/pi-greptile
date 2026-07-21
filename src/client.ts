@@ -6,7 +6,7 @@
  * so no MCP SDK or adapter process is needed.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -14,6 +14,10 @@ export const DEFAULT_ENDPOINT = "https://api.greptile.com/mcp";
 export const CONFIG_PATH = join(homedir(), ".pi", "greptile.json");
 
 const PROTOCOL_VERSION = "2025-06-18";
+/** Hard cap on a single request so a hung server can't stall the agent forever. */
+const REQUEST_TIMEOUT_MS = 60_000;
+/** Cap on tool output fed back into the LLM context. */
+const MAX_OUTPUT_CHARS = 200_000;
 
 export class GreptileAuthError extends Error {}
 
@@ -64,6 +68,12 @@ export function saveGreptileConfig(updates: Partial<GreptileConfig>): void {
 	}
 	mkdirSync(dirname(CONFIG_PATH), { recursive: true });
 	writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+	// writeFileSync's mode only applies on creation — tighten pre-existing files too.
+	try {
+		chmodSync(CONFIG_PATH, 0o600);
+	} catch {
+		// Best effort (e.g. Windows).
+	}
 }
 
 export function resolveApiKey(): string | null {
@@ -80,6 +90,27 @@ export const MISSING_KEY_MESSAGE = [
 	'  2. export GREPTILE_API_KEY="..." in your shell, or',
 	`  3. create ${CONFIG_PATH} with {"apiKey": "..."}`,
 ].join("\n");
+
+/**
+ * Validate a Greptile endpoint override. The API key is sent as a Bearer
+ * header, so we refuse plaintext HTTP except for localhost (self-hosted dev).
+ */
+export function validateEndpoint(endpoint: string): string {
+	let url: URL;
+	try {
+		url = new URL(endpoint);
+	} catch {
+		throw new Error(`Invalid Greptile endpoint URL: ${endpoint}`);
+	}
+	const isLocalhost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+	if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalhost)) {
+		throw new Error(
+			`Greptile endpoint must use https (got ${url.protocol}//). ` +
+				"Plain http is only allowed for localhost.",
+		);
+	}
+	return endpoint;
+}
 
 /** Parse a text/event-stream body into the JSON-RPC responses it carries. */
 export function parseSseResponses(body: string): JsonRpcResponse[] {
@@ -109,7 +140,17 @@ function extractText(result: ToolCallResult): string {
 	if (parts.length === 0 && result.structuredContent !== undefined) {
 		parts.push(JSON.stringify(result.structuredContent, null, 2));
 	}
-	return parts.join("\n\n") || "(empty response)";
+	const text = parts.join("\n\n") || "(empty response)";
+	if (text.length > MAX_OUTPUT_CHARS) {
+		return `${text.slice(0, MAX_OUTPUT_CHARS)}\n\n[pi-greptile: output truncated at ${MAX_OUTPUT_CHARS} characters]`;
+	}
+	return text;
+}
+
+/** Combine the caller's signal with a hard request timeout. */
+function withTimeout(signal: AbortSignal | undefined): AbortSignal {
+	const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 export class GreptileClient {
@@ -117,10 +158,13 @@ export class GreptileClient {
 	private initialized = false;
 	private nextId = 1;
 
-	constructor(
-		private readonly apiKey: string,
-		private readonly endpoint: string = DEFAULT_ENDPOINT,
-	) {}
+	private readonly apiKey: string;
+	private readonly endpoint: string;
+
+	constructor(apiKey: string, endpoint: string = DEFAULT_ENDPOINT) {
+		this.apiKey = apiKey;
+		this.endpoint = validateEndpoint(endpoint);
+	}
 
 	private headers(): Record<string, string> {
 		const headers: Record<string, string> = {
@@ -141,7 +185,7 @@ export class GreptileClient {
 			method: "POST",
 			headers: this.headers(),
 			body: JSON.stringify(body),
-			signal,
+			signal: withTimeout(signal),
 		});
 		const sid = res.headers.get("mcp-session-id");
 		if (sid) this.sessionId = sid;
@@ -188,7 +232,7 @@ export class GreptileClient {
 				params: {
 					protocolVersion: PROTOCOL_VERSION,
 					capabilities: {},
-					clientInfo: { name: "greptile-pi", version: "0.1.0" },
+					clientInfo: { name: "pi-greptile", version: "0.1.0" },
 				},
 			},
 			signal,
@@ -258,7 +302,7 @@ export class GreptileClient {
 	 */
 	async probeAuth(signal?: AbortSignal): Promise<{ valid: boolean; error: string | null }> {
 		try {
-			await this.callTool("get_custom_context", { customContextId: "greptile-pi-auth-probe" }, signal);
+			await this.callTool("get_custom_context", { customContextId: "pi-greptile-auth-probe" }, signal);
 			return { valid: true, error: null };
 		} catch (err) {
 			if (err instanceof GreptileAuthError) {
