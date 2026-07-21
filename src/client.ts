@@ -6,9 +6,9 @@
  * so no MCP SDK or adapter process is needed.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export const DEFAULT_ENDPOINT = "https://api.greptile.com/mcp";
 export const CONFIG_PATH = join(homedir(), ".pi", "greptile.json");
@@ -55,6 +55,17 @@ export function loadGreptileConfig(): GreptileConfig {
 	}
 }
 
+/** Merge updates into ~/.pi/greptile.json. Pass undefined to delete a field. */
+export function saveGreptileConfig(updates: Partial<GreptileConfig>): void {
+	const config: Record<string, unknown> = { ...loadGreptileConfig() };
+	for (const [key, value] of Object.entries(updates)) {
+		if (value === undefined) delete config[key];
+		else config[key] = value;
+	}
+	mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+	writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+}
+
 export function resolveApiKey(): string | null {
 	const fromEnv = process.env.GREPTILE_API_KEY?.trim();
 	if (fromEnv) return fromEnv;
@@ -65,8 +76,9 @@ export function resolveApiKey(): string | null {
 export const MISSING_KEY_MESSAGE = [
 	"Greptile API key not found.",
 	"Get one at app.greptile.com → Settings → Organization → API Keys, then either:",
-	'  1. export GREPTILE_API_KEY="..." in your shell, or',
-	`  2. create ${CONFIG_PATH} with {"apiKey": "..."}`,
+	"  1. run /greptile key in pi (interactive setup), or",
+	'  2. export GREPTILE_API_KEY="..." in your shell, or',
+	`  3. create ${CONFIG_PATH} with {"apiKey": "..."}`,
 ].join("\n");
 
 /** Parse a text/event-stream body into the JSON-RPC responses it carries. */

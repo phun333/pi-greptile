@@ -12,17 +12,30 @@ pi install /path/to/greptile-pi
 
 ## Setup
 
-Get an API key at **app.greptile.com → Settings → Organization → API Keys**, then either:
+Inside pi, run:
+
+```
+/greptile key
+```
+
+Paste your API key (from **app.greptile.com → Settings → Organization → API Keys**) — it is validated against the Greptile API and saved to `~/.pi/greptile.json` (mode 0600).
+
+Alternatives:
 
 ```bash
 export GREPTILE_API_KEY="..."
 ```
 
-or create `~/.pi/greptile.json`:
+or create `~/.pi/greptile.json` manually:
 
 ```json
 { "apiKey": "..." }
 ```
+
+Other commands:
+
+- `/greptile` — status: key source + connectivity check
+- `/greptile clear` — remove the saved key
 
 Optionally override the endpoint (self-hosted Greptile):
 
