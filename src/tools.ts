@@ -280,17 +280,11 @@ export function registerGreptileTools(pi: ExtensionAPI): void {
 			const apiKey = resolveApiKey();
 			if (!apiKey) return textResult(MISSING_KEY_MESSAGE);
 			const client = getClient();
-			const result = await client.listTools(signal);
+			const [result, probe] = await Promise.all([client.listTools(signal), client.probeAuth(signal)]);
 			const tools = (result as { tools?: Array<{ name: string; description?: string }> })?.tools ?? [];
-			// tools/list is unauthenticated on Greptile's side — verify the key with a real call.
-			let authLine: string;
-			try {
-				await client.callTool("list_custom_context", { limit: 1 }, signal);
-				authLine = "API key: valid (authenticated call succeeded)";
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				authLine = `API key: INVALID — ${message}`;
-			}
+			const authLine = probe.valid
+				? "API key: valid"
+				: `API key: INVALID — ${probe.error ?? "rejected"}`;
 			const lines = [
 				`Greptile MCP: reachable (${tools.length} remote tools)`,
 				authLine,

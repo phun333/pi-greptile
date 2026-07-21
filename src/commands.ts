@@ -16,6 +16,8 @@ interface GreptileStatusDetails {
 	keyMasked: string | null;
 	keySource: "env" | "config" | null;
 	endpoint: string;
+	/** true when a live connectivity/auth check was performed (/greptile check). */
+	checked: boolean;
 	reachable: boolean;
 	authValid: boolean | null;
 	remoteToolCount: number | null;
@@ -29,7 +31,7 @@ const TOOL_GROUPS: Array<[label: string, tools: string]> = [
 	["reviews", "greptile_{list,get,trigger}_code_review{,s}"],
 	["search", "greptile_search_comments · greptile_search_custom_context"],
 	["misc", "greptile_status"],
-	["setup", "/greptile key · /greptile clear · /greptile"],
+	["setup", "/greptile key · /greptile check · /greptile clear"],
 ];
 
 function maskKey(key: string): string {
@@ -56,6 +58,10 @@ function statusText(d: GreptileStatusDetails): string {
 	if (!d.keySource) {
 		lines.push("Greptile: no API key configured.");
 		lines.push(`Set one with /greptile key, GREPTILE_API_KEY, or ${CONFIG_PATH}`);
+	} else if (!d.checked) {
+		lines.push(
+			`Greptile: key ${d.keyMasked} (${d.keySource}) · ${endpointHost(d.endpoint)} — run /greptile check to verify connectivity`,
+		);
 	} else if (d.authValid === false) {
 		lines.push(`Greptile: API key ${d.keyMasked} (${d.keySource}) was REJECTED.`);
 		if (d.error) lines.push(d.error);
@@ -75,27 +81,29 @@ function statusText(d: GreptileStatusDetails): string {
 	return lines.join("\n");
 }
 
-async function collectStatus(): Promise<GreptileStatusDetails> {
-	const endpoint = loadGreptileConfig().endpoint ?? DEFAULT_ENDPOINT;
-	const source = keySource();
+function localStatus(): GreptileStatusDetails {
 	const key = resolveApiKey();
-	const details: GreptileStatusDetails = {
+	return {
 		keyMasked: key ? maskKey(key) : null,
-		keySource: source,
-		endpoint,
+		keySource: keySource(),
+		endpoint: loadGreptileConfig().endpoint ?? DEFAULT_ENDPOINT,
+		checked: false,
 		reachable: false,
 		authValid: null,
 		remoteToolCount: null,
 		error: null,
 	};
+}
+
+async function collectStatus(): Promise<GreptileStatusDetails> {
+	const details = localStatus();
+	details.checked = true;
+	const key = resolveApiKey();
 	if (!key) return details;
+	const endpoint = details.endpoint;
 
 	const client = new GreptileClient(key, endpoint);
-	const [toolsResult, authResult] = await Promise.allSettled([
-		client.listTools(),
-		// tools/list is unauthenticated on Greptile's side — this validates the key.
-		client.callTool("list_custom_context", { limit: 1 }),
-	]);
+	const [toolsResult, authResult] = await Promise.allSettled([client.listTools(), client.probeAuth()]);
 	if (toolsResult.status === "fulfilled") {
 		details.reachable = true;
 		details.remoteToolCount =
@@ -103,9 +111,14 @@ async function collectStatus(): Promise<GreptileStatusDetails> {
 	} else {
 		details.error = toolsResult.reason instanceof Error ? toolsResult.reason.message : String(toolsResult.reason);
 	}
-	details.authValid = authResult.status === "fulfilled";
-	if (authResult.status === "rejected" && !details.error) {
-		details.error = authResult.reason instanceof Error ? authResult.reason.message : String(authResult.reason);
+	if (authResult.status === "fulfilled") {
+		details.authValid = authResult.value.valid;
+		if (!authResult.value.valid && authResult.value.error) details.error = authResult.value.error;
+	} else {
+		details.authValid = false;
+		if (!details.error) {
+			details.error = authResult.reason instanceof Error ? authResult.reason.message : String(authResult.reason);
+		}
 	}
 	return details;
 }
@@ -121,6 +134,11 @@ export function registerGreptileCommands(pi: ExtensionAPI): void {
 		if (!d.keySource) {
 			dot = theme.fg("warning", "○");
 			headline = `${theme.fg("text", "Greptile")} ${theme.fg("dim", "·")} ${theme.fg("warning", "no API key")} ${theme.fg("dim", "— run /greptile key")}`;
+		} else if (!d.checked) {
+			dot = theme.fg("accent", "●");
+			headline =
+				`${theme.fg("text", "Greptile")} ${theme.fg("dim", "·")} ` +
+				theme.fg("dim", `key ${d.keyMasked} (${d.keySource}) · ${endpointHost(d.endpoint)} · /greptile check to verify`);
 		} else if (d.authValid === false) {
 			dot = theme.fg("error", "●");
 			headline = `${theme.fg("text", "Greptile")} ${theme.fg("dim", "·")} ${theme.fg("error", `key ${d.keyMasked} rejected`)} ${theme.fg("dim", `(${d.keySource})`)}`;
@@ -166,8 +184,8 @@ export function registerGreptileCommands(pi: ExtensionAPI): void {
 				}
 				try {
 					const client = new GreptileClient(apiKey, loadGreptileConfig().endpoint ?? DEFAULT_ENDPOINT);
-					// tools/list is unauthenticated — validate with a real authenticated call.
-					await client.callTool("list_custom_context", { limit: 1 });
+					const probe = await client.probeAuth();
+					if (!probe.valid) throw new Error(probe.error ?? "Greptile rejected the API key.");
 					saveGreptileConfig({ apiKey });
 					ctx.ui.notify(
 						`Greptile key validated. ${maskKey(apiKey)} saved to ${CONFIG_PATH}`,
@@ -199,8 +217,20 @@ export function registerGreptileCommands(pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Default: compact status + tools panel
-			const details = await collectStatus();
+			if (sub === "check" || sub === "test") {
+				ctx.ui.notify("Checking Greptile connectivity…", "info");
+				const details = await collectStatus();
+				pi.sendMessage({
+					customType: STATUS_TYPE,
+					content: statusText(details),
+					display: true,
+					details,
+				});
+				return;
+			}
+
+			// Default: instant, purely local status + tools panel (no network).
+			const details = localStatus();
 			pi.sendMessage({
 				customType: STATUS_TYPE,
 				content: statusText(details),

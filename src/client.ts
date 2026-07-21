@@ -202,8 +202,7 @@ export class GreptileClient {
 		this.initialized = true;
 	}
 
-	private async request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
-		await this.ensureInitialized(signal);
+	private async requestOnce(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
 		const id = this.nextId++;
 		const { responses } = await this.post({ jsonrpc: "2.0", id, method, params }, signal);
 		const reply = responses.find((r) => r.id === id) ?? responses.find((r) => r.result || r.error);
@@ -212,6 +211,24 @@ export class GreptileClient {
 			throw new Error(`Greptile error (${reply.error.code}): ${reply.error.message}`);
 		}
 		return reply.result;
+	}
+
+	/**
+	 * Greptile's MCP endpoint is stateless, so we skip the initialize handshake
+	 * (saves two round-trips per session). If the server ever demands a session,
+	 * we initialize once and retry.
+	 */
+	private async request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
+		if (this.initialized) return this.requestOnce(method, params, signal);
+		try {
+			return await this.requestOnce(method, params, signal);
+		} catch (err) {
+			if (err instanceof GreptileAuthError) throw err;
+			const message = err instanceof Error ? err.message : String(err);
+			if (!/session|initializ/i.test(message)) throw err;
+			await this.ensureInitialized(signal);
+			return this.requestOnce(method, params, signal);
+		}
 	}
 
 	/** Call a remote Greptile tool and return its text output. */
@@ -231,5 +248,23 @@ export class GreptileClient {
 	/** List tools exposed by the remote server (diagnostics). */
 	async listTools(signal?: AbortSignal): Promise<unknown> {
 		return this.request("tools/list", {}, signal);
+	}
+
+	/**
+	 * Fast (~0.5s) API key check. tools/list is unauthenticated on Greptile's
+	 * side and list_custom_context takes ~9s, so probe with a bogus
+	 * get_custom_context: an auth failure means bad key, any other reply means
+	 * the key is valid.
+	 */
+	async probeAuth(signal?: AbortSignal): Promise<{ valid: boolean; error: string | null }> {
+		try {
+			await this.callTool("get_custom_context", { customContextId: "greptile-pi-auth-probe" }, signal);
+			return { valid: true, error: null };
+		} catch (err) {
+			if (err instanceof GreptileAuthError) {
+				return { valid: false, error: err.message };
+			}
+			return { valid: true, error: null };
+		}
 	}
 }
