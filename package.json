@@ -7,15 +7,19 @@
   "files": [
     "src",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
     "pi-package",
     "pi",
     "pi-extension",
+    "pi-coding-agent",
     "extension",
     "greptile",
     "code-review",
+    "ai-code-review",
+    "pull-request",
     "mcp"
   ],
   "license": "MIT",
@@ -31,7 +35,8 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/phun333/pi-greptile/main/banner.png"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

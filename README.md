@@ -4,7 +4,9 @@
 [![npm](https://img.shields.io/npm/v/pi-greptile)](https://www.npmjs.com/package/pi-greptile)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Native [Greptile](https://greptile.com) tools for the [pi coding agent](https://github.com/badlogic/pi-mono) — AI code reviews, PR data, and organizational custom context as first-class `greptile_*` tools.
+Native [Greptile](https://greptile.com) tools for the [pi coding agent](https://pi.dev) — AI code reviews, PR data, and organizational custom context as first-class `greptile_*` tools.
+
+![pi-greptile](https://raw.githubusercontent.com/phun333/pi-greptile/main/banner.png)
 
 No MCP adapter, no extra process: the extension speaks JSON-RPC directly to Greptile's remote MCP endpoint, skipping the initialize handshake on Greptile's stateless server for faster calls.
 
