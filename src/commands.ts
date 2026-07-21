@@ -38,11 +38,11 @@ export function registerGreptileCommands(pi: ExtensionAPI): void {
 				}
 				try {
 					const client = new GreptileClient(apiKey, loadGreptileConfig().endpoint ?? DEFAULT_ENDPOINT);
-					const result = (await client.listTools()) as { tools?: unknown[] };
+					// tools/list is unauthenticated — validate with a real authenticated call.
+					await client.callTool("list_custom_context", { limit: 1 });
 					saveGreptileConfig({ apiKey });
-					const count = result?.tools?.length ?? 0;
 					ctx.ui.notify(
-						`Greptile connected (${count} remote tools). Key ${maskKey(apiKey)} saved to ${CONFIG_PATH}`,
+						`Greptile key validated. ${maskKey(apiKey)} saved to ${CONFIG_PATH}`,
 						"info",
 					);
 				} catch (err) {
@@ -84,9 +84,9 @@ export function registerGreptileCommands(pi: ExtensionAPI): void {
 			const origin = source === "env" ? "GREPTILE_API_KEY env var" : CONFIG_PATH;
 			try {
 				const client = new GreptileClient(key, loadGreptileConfig().endpoint ?? DEFAULT_ENDPOINT);
-				const result = (await client.listTools()) as { tools?: unknown[] };
+				await client.callTool("list_custom_context", { limit: 1 });
 				ctx.ui.notify(
-					`Greptile connected — key ${maskKey(key)} from ${origin}, ${result?.tools?.length ?? 0} remote tools.`,
+					`Greptile connected — key ${maskKey(key)} from ${origin} is valid.`,
 					"info",
 				);
 			} catch (err) {

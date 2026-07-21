@@ -24,8 +24,8 @@ const repoName = (required: boolean) => {
 	return required ? schema : Type.Optional(schema);
 };
 const repoRemote = (required: boolean) => {
-	const schema = StringEnum(["github", "gitlab"] as const, {
-		description: "Repository host: github or gitlab",
+	const schema = StringEnum(["github", "gitlab", "bitbucket", "perforce"] as const, {
+		description: "Repository host",
 	});
 	return required ? schema : Type.Optional(schema);
 };
@@ -83,6 +83,7 @@ const TOOLS: GreptileToolDef[] = [
 		parameters: Type.Object({
 			query: Type.String({ description: "Search term" }),
 			limit: limit(50, 10),
+			offset,
 		}),
 	},
 	{
@@ -121,6 +122,8 @@ const TOOLS: GreptileToolDef[] = [
 			remote: repoRemote(false),
 			defaultBranch: repoBranch(false),
 			remoteUrl,
+			sourceBranch: Type.Optional(Type.String({ description: "Filter by source branch" })),
+			authorLogin: Type.Optional(Type.String({ description: "Filter by PR author login" })),
 			state: Type.Optional(
 				StringEnum(["open", "closed", "merged"] as const, { description: "Filter by PR state" }),
 			),
@@ -157,6 +160,8 @@ const TOOLS: GreptileToolDef[] = [
 				Type.Boolean({ description: "Only Greptile-generated comments" }),
 			),
 			addressed: Type.Optional(Type.Boolean({ description: "Filter by addressed status" })),
+			createdAfter: Type.Optional(Type.String({ description: "Only comments created after this ISO date" })),
+			createdBefore: Type.Optional(Type.String({ description: "Only comments created before this ISO date" })),
 		}),
 	},
 	// ── Code reviews ──────────────────────────────────────────────────────────
@@ -194,10 +199,12 @@ const TOOLS: GreptileToolDef[] = [
 		name: "greptile_trigger_code_review",
 		remoteName: "trigger_code_review",
 		label: "Greptile: Trigger Code Review",
-		description: "Start a new Greptile AI code review on a pull request.",
+		description: "Start a new Greptile AI code review on a pull request. GitHub and GitLab only.",
 		parameters: Type.Object({
 			name: repoName(true),
-			remote: repoRemote(true),
+			remote: StringEnum(["github", "gitlab"] as const, {
+				description: "Repository host (code review supports github and gitlab only)",
+			}),
 			defaultBranch: repoBranch(true),
 			branch: Type.Optional(Type.String({ description: "Working branch of the PR" })),
 			remoteUrl,
@@ -210,10 +217,14 @@ const TOOLS: GreptileToolDef[] = [
 		remoteName: "search_greptile_comments",
 		label: "Greptile: Search Comments",
 		description:
-			"Search past Greptile review comments across the organization's repositories by content.",
+			"Search Greptile-generated review comments (including code suggestions) across all merge requests. Useful for finding patterns in Greptile's review feedback.",
 		parameters: Type.Object({
 			query: Type.String({ description: "Search term" }),
 			limit: limit(50, 10),
+			includeAddressed: Type.Optional(
+				Type.Boolean({ description: "Include comments already marked addressed" }),
+			),
+			createdAfter: Type.Optional(Type.String({ description: "Only comments created after this ISO date" })),
 		}),
 	},
 ];
@@ -268,10 +279,21 @@ export function registerGreptileTools(pi: ExtensionAPI): void {
 		async execute(_toolCallId, _params, signal) {
 			const apiKey = resolveApiKey();
 			if (!apiKey) return textResult(MISSING_KEY_MESSAGE);
-			const result = await getClient().listTools(signal);
+			const client = getClient();
+			const result = await client.listTools(signal);
 			const tools = (result as { tools?: Array<{ name: string; description?: string }> })?.tools ?? [];
+			// tools/list is unauthenticated on Greptile's side — verify the key with a real call.
+			let authLine: string;
+			try {
+				await client.callTool("list_custom_context", { limit: 1 }, signal);
+				authLine = "API key: valid (authenticated call succeeded)";
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				authLine = `API key: INVALID — ${message}`;
+			}
 			const lines = [
-				`Greptile MCP: connected (${tools.length} remote tools)`,
+				`Greptile MCP: reachable (${tools.length} remote tools)`,
+				authLine,
 				...tools.map((t) => `  - ${t.name}${t.description ? `: ${t.description.split("\n")[0]}` : ""}`),
 			];
 			return textResult(lines.join("\n"));
